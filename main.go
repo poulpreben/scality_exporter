@@ -75,32 +75,32 @@ func updateLivecheck(url string) {
 
 			if err != nil {
 				fmt.Println("Error:", err)
-			}
-
-			for i := range raftSessions {
-				for k, v := range raftSessions[i].IsConnected {
-					rc.WithLabelValues(
-						strconv.Itoa(raftSessions[i].Id),
-						raftSessions[i].Leader.Host,
-						strconv.Itoa(raftSessions[i].Leader.Port),
-						strconv.Itoa(k),
-						fmt.Sprintf(
-							"%v:%v/%v",
+			} else {
+				for i := range raftSessions {
+					for k, v := range raftSessions[i].IsConnected {
+						rc.WithLabelValues(
+							strconv.Itoa(raftSessions[i].Id),
 							raftSessions[i].Leader.Host,
 							strconv.Itoa(raftSessions[i].Leader.Port),
 							strconv.Itoa(k),
-						),
-					).Add(v.boolToFloat())
-				}
+							fmt.Sprintf(
+								"%v:%v/%v",
+								raftSessions[i].Leader.Host,
+								strconv.Itoa(raftSessions[i].Leader.Port),
+								strconv.Itoa(k),
+							),
+						).Set(v.boolToFloat())
+					}
 
-				rs.WithLabelValues(
-					strconv.Itoa(raftSessions[i].Id),
-					raftSessions[i].Leader.Host,
-					strconv.Itoa(raftSessions[i].Leader.Port),
-				).Add(raftSessions[i].AbleToReplicate.boolToFloat())
+					rs.WithLabelValues(
+						strconv.Itoa(raftSessions[i].Id),
+						raftSessions[i].Leader.Host,
+						strconv.Itoa(raftSessions[i].Leader.Port),
+					).Set(raftSessions[i].AbleToReplicate.boolToFloat())
+				}
 			}
 
-			time.Sleep(2 * time.Second)
+			time.Sleep(300 * time.Second)
 		}
 	}()
 }
