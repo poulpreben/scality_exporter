@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -35,52 +34,79 @@ func (b *raftStatus) boolToFloat() float64 {
 	return 0
 }
 
-func getScalityLiveCheck(url string) []raftSession {
+func getScalityLiveCheck(url string) ([]raftSession, error) {
 	c := http.Client{
 		Timeout: time.Second * 5,
 	}
 
 	req, err := http.NewRequest(http.MethodPost, url, nil)
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("could not create HTTP request")
 	}
 	req.Header.Set("User-Agent", "Go-Scality-Exporter")
 
 	res, err := c.Do(req)
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("could not perform HTTP request to URL: %v. Response: %v", url, res.Status)
 	}
 
 	if res.StatusCode != http.StatusOK {
-		log.Fatalf("Could not fetch status from %v: %v", url, res.Status)
+		return nil, fmt.Errorf("could not fetch status from %v: %v", url, res.Status)
 	}
 
 	body, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("failed to read response body")
 	}
 
 	var rss []raftSession
 	jsonErr := json.Unmarshal(body, &rss)
 	if jsonErr != nil {
-		log.Fatal(jsonErr)
+		return nil, fmt.Errorf("failed to parse JSON response")
 	}
 
-	return rss
+	return rss, nil
 }
 
-func main() {
-	server := flag.String("server", "10.10.63.47", "IP address or FQDN")
-	port := flag.String("port", "9000", "Port of `repd`")
-	path := flag.String("path", "/_/livecheck", "Path to `livecheck`")
+func updateLivecheck(url string) {
+	go func() {
+		for {
+			raftSessions, err := getScalityLiveCheck(url)
 
-	flag.Parse()
+			if err != nil {
+				fmt.Println("Error:", err)
+			}
 
-	url := fmt.Sprintf("http://%v:%v%v", *server, *port, *path)
+			for i := range raftSessions {
+				for k, v := range raftSessions[i].IsConnected {
+					rc.WithLabelValues(
+						strconv.Itoa(raftSessions[i].Id),
+						raftSessions[i].Leader.Host,
+						strconv.Itoa(raftSessions[i].Leader.Port),
+						strconv.Itoa(k),
+						fmt.Sprintf(
+							"%v:%v/%v",
+							raftSessions[i].Leader.Host,
+							strconv.Itoa(raftSessions[i].Leader.Port),
+							strconv.Itoa(k),
+						),
+					).Add(v.boolToFloat())
+				}
 
-	raftSessions := getScalityLiveCheck(url)
+				rs.WithLabelValues(
+					strconv.Itoa(raftSessions[i].Id),
+					raftSessions[i].Leader.Host,
+					strconv.Itoa(raftSessions[i].Leader.Port),
+				).Add(raftSessions[i].AbleToReplicate.boolToFloat())
+			}
 
-	rs := promauto.NewGaugeVec(prometheus.GaugeOpts{
+			time.Sleep(2 * time.Second)
+		}
+	}()
+}
+
+var (
+	rs = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "scality",
 		Subsystem: "metadata_replication",
 		Name:      "replication_status",
@@ -93,8 +119,10 @@ func main() {
 		// the port of the session leader
 		"port",
 	})
+)
 
-	rc := promauto.NewGaugeVec(prometheus.GaugeOpts{
+var (
+	rc = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "scality",
 		Subsystem: "metadata_replication",
 		Name:      "peer_connection",
@@ -111,29 +139,18 @@ func main() {
 		// label for unique grouping
 		"connection_path",
 	})
+)
 
-	for i := range raftSessions {
-		for k, v := range raftSessions[i].IsConnected {
-			rc.WithLabelValues(
-				strconv.Itoa(raftSessions[i].Id),
-				raftSessions[i].Leader.Host,
-				strconv.Itoa(raftSessions[i].Leader.Port),
-				strconv.Itoa(k),
-				fmt.Sprintf(
-					"%v:%v/%v",
-					raftSessions[i].Leader.Host,
-					strconv.Itoa(raftSessions[i].Leader.Port),
-					strconv.Itoa(k),
-				),
-			).Add(v.boolToFloat())
-		}
+func main() {
+	server := flag.String("server", "10.10.63.47", "IP address or FQDN")
+	port := flag.String("port", "9000", "Port of `repd`")
+	path := flag.String("path", "/_/livecheck", "Path to `livecheck`")
 
-		rs.WithLabelValues(
-			strconv.Itoa(raftSessions[i].Id),
-			raftSessions[i].Leader.Host,
-			strconv.Itoa(raftSessions[i].Leader.Port),
-		).Add(raftSessions[i].AbleToReplicate.boolToFloat())
-	}
+	flag.Parse()
+
+	url := fmt.Sprintf("http://%v:%v%v", *server, *port, *path)
+
+	updateLivecheck(url)
 
 	fmt.Println("Exporter for Scality")
 	fmt.Println("Listening on: http://0.0.0.0:9284/metrics")
