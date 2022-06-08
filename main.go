@@ -69,77 +69,76 @@ func getScalityLiveCheck(url string) ([]raftSession, error) {
 }
 
 func updateLivecheck(url string) {
-	go func() {
-		for {
-			raftSessions, err := getScalityLiveCheck(url)
+	for {
+		var (
+			rs = promauto.NewGaugeVec(prometheus.GaugeOpts{
+				Namespace: "scality",
+				Subsystem: "metadata_replication",
+				Name:      "replication_status",
+				Help:      "Status for Scality raft replication status",
+			}, []string{
+				// the raft session ID
+				"id",
+				// the IP address of the session leader
+				"leader",
+				// the port of the session leader
+				"port",
+			})
+		)
+		
+		var (
+			rc = promauto.NewGaugeVec(prometheus.GaugeOpts{
+				Namespace: "scality",
+				Subsystem: "metadata_replication",
+				Name:      "peer_connection",
+				Help:      "Status for Scality raft session peering",
+			}, []string{
+				// the raft session ID
+				"id",
+				// the IP address of the session leader
+				"leader",
+				// the port of the session leader
+				"port",
+				// the ID of its metadata peer
+				"connection_to",
+				// label for unique grouping
+				"connection_path",
+			})
+		)
+		
+		raftSessions, err := getScalityLiveCheck(url)
 
-			if err != nil {
-				fmt.Println("Error:", err)
-			} else {
-				for i := range raftSessions {
-					for k, v := range raftSessions[i].IsConnected {
-						rc.WithLabelValues(
-							strconv.Itoa(raftSessions[i].Id),
-							raftSessions[i].Leader.Host,
-							strconv.Itoa(raftSessions[i].Leader.Port),
-							strconv.Itoa(k),
-							fmt.Sprintf(
-								"%v:%v/%v",
-								raftSessions[i].Leader.Host,
-								strconv.Itoa(raftSessions[i].Leader.Port),
-								strconv.Itoa(k),
-							),
-						).Set(v.boolToFloat())
-					}
-
-					rs.WithLabelValues(
+		if err != nil {
+			fmt.Println("Error:", err)
+		} else {
+			for i := range raftSessions {
+				for k, v := range raftSessions[i].IsConnected {
+					rc.WithLabelValues(
 						strconv.Itoa(raftSessions[i].Id),
 						raftSessions[i].Leader.Host,
 						strconv.Itoa(raftSessions[i].Leader.Port),
-					).Set(raftSessions[i].AbleToReplicate.boolToFloat())
+						strconv.Itoa(k),
+						fmt.Sprintf(
+							"%v:%v/%v",
+							raftSessions[i].Leader.Host,
+							strconv.Itoa(raftSessions[i].Leader.Port),
+							strconv.Itoa(k),
+						),
+					).Set(v.boolToFloat())
 				}
-			}
 
-			time.Sleep(300 * time.Second)
+				rs.WithLabelValues(
+					strconv.Itoa(raftSessions[i].Id),
+					raftSessions[i].Leader.Host,
+					strconv.Itoa(raftSessions[i].Leader.Port),
+				).Set(raftSessions[i].AbleToReplicate.boolToFloat())
+			}
 		}
-	}()
+
+		time.Sleep(300 * time.Second)
+	}
 }
 
-var (
-	rs = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: "scality",
-		Subsystem: "metadata_replication",
-		Name:      "replication_status",
-		Help:      "Status for Scality raft replication status",
-	}, []string{
-		// the raft session ID
-		"id",
-		// the IP address of the session leader
-		"leader",
-		// the port of the session leader
-		"port",
-	})
-)
-
-var (
-	rc = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: "scality",
-		Subsystem: "metadata_replication",
-		Name:      "peer_connection",
-		Help:      "Status for Scality raft session peering",
-	}, []string{
-		// the raft session ID
-		"id",
-		// the IP address of the session leader
-		"leader",
-		// the port of the session leader
-		"port",
-		// the ID of its metadata peer
-		"connection_to",
-		// label for unique grouping
-		"connection_path",
-	})
-)
 
 func main() {
 	server := flag.String("server", "10.10.63.47", "IP address or FQDN")
@@ -150,7 +149,7 @@ func main() {
 
 	url := fmt.Sprintf("http://%v:%v%v", *server, *port, *path)
 
-	updateLivecheck(url)
+	go updateLivecheck(url)
 
 	fmt.Println("Exporter for Scality")
 	fmt.Println("Listening on: http://0.0.0.0:9284/metrics")
